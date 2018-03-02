@@ -1,11 +1,9 @@
-'use strict';
+import frontMatter from 'front-matter';
+import Prism from 'node-prismjs';
+import md from 'Marked';
+import { escapeHtml } from 'remarkable/lib/common/utils';
 
-const frontMatter = require('front-matter');
-const Prism = require('node-prismjs');
-const Remarkable = require('remarkable');
-const escapeHtml = require('remarkable/lib/common/utils').escapeHtml;
-
-const md = new Remarkable();
+const components = [];
 
 /**
  * Wraps the code and jsx in an html component
@@ -17,14 +15,59 @@ const md = new Remarkable();
  */
 function codeBlockTemplate(exampleRun, exampleSrc, langClass) {
   return `
-<div class="example">
-  <div class="run">${exampleRun}</div>
-  <div class="source">
-    <pre${!langClass ? '' : ` class="${langClass}"`}><code${!langClass ? '' : ` class="${langClass}"`}>
-      ${exampleSrc}
-    </code></pre>
-  </div>
-</div>`;
+      <div class="code-block">
+        ${ codeRunTemplate(exampleRun) }
+
+        <CodeTemplate source='${exampleRun}'>
+          ${exampleSrc}
+        </CodeTemplate>
+      </div>`;
+}
+
+
+/**
+ * Render Code (React Component)
+ * @param   {string} code   code string
+ * @returns {string} JSX or the reference of component
+ */
+function codeRunTemplate(code, onlyRun) {
+  const runCls = onlyRun ? 'code-just-run' : 'code-run'
+  if (/React.Component/.test(code)) {
+    // Don't need to use UUID
+    const ID = 'B' + Math.random().toString(36).substr(2, 5).replace(/\d/g,'A');
+    components.push(`const ${ID} = ${code}`);
+    return `<${ID} />`
+  } else {
+    return `
+      <div className="${runCls}">
+        ${code}
+      </div>`
+  }
+}
+
+
+/**
+ * highlight code
+ * @param  {string} code - Raw html code
+ * @param  {string} lang - Language indicated in the code block
+ * @return {string} code block
+ */
+function highlight(code, lang) {
+  const language = Prism.languages[lang] || Prism.languages.autoit;
+  const hl = Prism.highlight(code, language)
+    .replace(/{/g, '{"{"{')
+    .replace(/}/g, '{"}"}')
+    .replace(/{"{"{/g, '{"{"}')
+    .replace(/(\n)/g, '{"\\n"}')
+    .replace(/class=/g, 'className=')
+
+  return `
+<pre${!lang ? '' : ` class="language-${lang}"`}>
+  <code${!lang ? '' : ` class="language-${lang}"`}>
+    ${hl}
+  </code>
+</pre>
+  `;
 }
 
 /**
@@ -35,22 +78,13 @@ function codeBlockTemplate(exampleRun, exampleSrc, langClass) {
  * @param   {Function} highlight  - Code highlight function
  * @returns {String}                Code block with souce and run code
  */
-function parseCodeBlock(code, lang, langPrefix, highlight) {
+function parseCodeBlock(code, lang, langPrefix) {
   let codeBlock = escapeHtml(code);
 
-  if (highlight) {
-    codeBlock = highlight(code, lang);
-  }
+  codeBlock = highlight(code, lang);
 
   const langClass = !lang ? '' : `${langPrefix}${escape(lang, true)}`;
   const jsx = code;
-
-  codeBlock = codeBlock
-    .replace(/{/g, '{"{"{')
-    .replace(/}/g, '{"}"}')
-    .replace(/{"{"{/g, '{"{"}')
-    .replace(/(\n)/g, '{"\\n"}')
-    .replace(/class=/g, 'className=');
 
   return codeBlockTemplate(jsx, codeBlock, langClass);
 }
@@ -77,31 +111,42 @@ function parseCodeBlock(code, lang, langPrefix, highlight) {
 function parseMarkdown(markdown) {
   return new Promise((resolve, reject) => {
     let html;
+    let hasCodeTemplate = false;
+
+    const renderer = new md.Renderer();
+
+    // customize rendering code
+    renderer.code = (code, language) => {
+      switch (language) {
+        case 'run':
+          return codeRunTemplate(code, true)
+        case 'demo':
+          hasCodeTemplate = true;
+          return parseCodeBlock(
+            code,
+            'jsx',
+            'language-'
+          )
+        default:
+          return highlight(code, language)
+      }
+    }
 
     const options = {
-      highlight(code, lang) {
-        const language = Prism.languages[lang] || Prism.languages.autoit;
-        return Prism.highlight(code, language);
-      },
-      xhtmlOut: true
+      renderer,
+      xhtml: true,
     };
 
-    md.set(options);
-
-    md.renderer.rules.fence_custom.render = (tokens, idx, opts) => {
-      // gets tags applied to fence blocks ```react html
-      const codeTags = tokens[idx].params.split(/\s+/g);
-      return parseCodeBlock(
-        tokens[idx].content,
-        codeTags[codeTags.length - 1],
-        opts.langPrefix,
-        opts.highlight
-      );
-    };
+    md.setOptions(options);
 
     try {
-      html = md.render(markdown.body);
-      return resolve({ html, attributes: markdown.attributes });
+      html = md(markdown.body);
+      return resolve({
+        html,
+        components,
+        hasCodeTemplate,
+        attributes: markdown.attributes,
+      });
     } catch (err) {
       return reject(err);
     }

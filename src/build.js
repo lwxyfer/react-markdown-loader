@@ -20,6 +20,10 @@ module.exports = function build(markdown) {
   let doImports = 'import React from \'react\';\n';
   const imports = markdown.attributes.imports || {};
   const jsx = markdown.html.replace(/class=/g, 'className=');
+  const components = markdown.components.reduce((a, c) => a + c, '');
+
+  // define your component here
+  const importCodeTemplate = markdown.hasCodeTemplate ? "import CodeTemplate from '../../utils/CodeTemplate'" : '';
 
   const frontMatterAttributes = except(markdown.attributes, 'imports');
 
@@ -33,13 +37,13 @@ module.exports = function build(markdown) {
 
   return `
 ${doImports}
+${importCodeTemplate}
+${components}
 
 export const attributes = ${JSON.stringify(camelize(frontMatterAttributes))};
-export default function() {
-  return (
-    <div>
-      ${jsx}
-    </div>
-  );
-};`;
+export default () => (
+  <div>
+    ${jsx}
+  </div>
+)`;
 };
